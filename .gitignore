@@ -1,0 +1,33 @@
+# LocatorForge IPC dir — populated at runtime in consuming repos, but ignored here too
+.locatorforge/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Java / Maven
+target/
+*.class
+.idea/
+*.iml
+.mvn/
+
+# Editors
+.vscode/
+*.swp
+
+# Cached UI jars (downloaded by cli.ensure_ui_jar)
+*.jar
+
+# OS
+.DS_Store
+Thumbs.db

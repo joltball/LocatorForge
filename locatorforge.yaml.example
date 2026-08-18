@@ -1,0 +1,50 @@
+# LocatorForge — example configuration. Copy to `locatorforge.yaml` at repo root.
+# All values below are the built-in defaults; remove keys you don't need to override.
+
+cdp:
+  debug_port: 9222
+  user_profile_dir: null   # null = ephemeral temp profile; set a path for persistent login
+
+api:
+  fastapi_port: 8765
+  bind_host: 127.0.0.1     # never change this — localhost only is non-negotiable
+
+search:
+  source_dirs:
+    - src/test/java/pages
+    - src/test/java/pageobjects
+    - tests/pages
+  file_patterns:
+    - "*Page.java"
+    - "*Page.ts"
+    - "*_page.py"
+  exclude_dirs:
+    - node_modules
+    - build
+    - target
+    - .git
+  pom_framework: selenium-java   # selenium-java | playwright-ts | pytest-selenium
+
+locators:
+  priority:
+    - data-testid
+    - aria-label
+    - id
+    - name
+    - css
+    - xpath
+  default_format: selenium       # selenium | playwright
+
+shadow_dom:
+  max_depth: 5
+  traverse_closed: false
+
+agent_output:
+  enable_code_block: false       # flip to true only after assessing default-mode output
+  code_style:
+    indent: "    "
+    access_modifier: private
+
+agent_ipc:
+  poll_dir: .locatorforge
+  status_poll_interval_sec: 2
