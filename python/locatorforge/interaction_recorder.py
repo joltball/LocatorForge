@@ -156,8 +156,16 @@ _CAPTURE_JS = """
     return out;
   }
 
+  // An <iframe>/<frame> is never a test target. Focusing or clicking into one
+  // makes the PARENT document see the frame element as the target, which would
+  // record every interaction inside the app as one meaningless entry. The real
+  // element is captured by that frame's own listener (we inject into all
+  // frames), so drop it here.
+  const FRAME_TAGS = new Set(['IFRAME', 'FRAME', 'FRAMESET', 'OBJECT', 'EMBED']);
+
   function emit(el, type, value) {
     if (!R.on || !el || el.nodeType !== 1) return;
+    if (FRAME_TAGS.has(el.tagName)) return;
     try {
       const seq = R.nodes.push(el) - 1;
       window.__locatorforge(JSON.stringify({
@@ -278,9 +286,46 @@ class InteractionRecorder:
         self._script_id: Optional[str] = None
         self._elements: dict[str, RecordedElement] = {}
         self._wired = False
+        self._ctx_hooked = False   # PHASE 8: frame-context listener registered?
+        self._frame_chains: dict[str, list] = {}   # frameId -> [FrameRef]
         self._resolve_lock = asyncio.Lock()
 
     # -- lifecycle ------------------------------------------------------
+    async def _install_all_frames(self, cdp: CdpEngine) -> int:
+        """Evaluate the capture script in every frame's default context."""
+        contexts = dict(getattr(cdp, "frame_contexts", {}) or {})
+        installed = 0
+        if not contexts:
+            # Engine predates context tracking, or Runtime.enable hasn't replayed
+            # yet — fall back to the main frame so recording still works.
+            try:
+                await cdp.send("Runtime.evaluate", {"expression": _CAPTURE_JS})
+                return 1
+            except CdpError as e:
+                log.warning("recorder injection failed: %s", e)
+                return 0
+        for frame_id, ctx_id in contexts.items():
+            try:
+                await cdp.send("Runtime.evaluate",
+                               {"expression": _CAPTURE_JS, "contextId": ctx_id})
+                installed += 1
+            except CdpError as e:
+                # about:blank / chrome-error frames routinely refuse; harmless.
+                log.debug("recorder injection skipped for frame %s: %s", frame_id[:8], e)
+        return installed
+
+    async def _on_new_frame_context(self, frame_id: str, ctx_id: int) -> None:
+        """A frame loaded a new document — install the listener into it."""
+        if not self.recording:
+            return
+        try:
+            cdp = await self._cdp_getter()
+            await cdp.send("Runtime.evaluate",
+                           {"expression": _CAPTURE_JS, "contextId": ctx_id})
+            log.debug("[recorder] re-injected into frame %s", frame_id[:8])
+        except Exception:  # noqa: BLE001
+            log.debug("[recorder] re-injection failed for frame %s", frame_id[:8])
+
     async def start(self, clear: bool = False) -> dict[str, Any]:
         cdp = await self._cdp_getter()
         if clear:
@@ -300,11 +345,21 @@ class InteractionRecorder:
         except CdpError as e:
             log.warning("addScriptToEvaluateOnNewDocument failed: %s", e)
         # addScriptToEvaluateOnNewDocument only affects *future* documents —
-        # install into the page that is already open as well.
-        try:
-            await cdp.send("Runtime.evaluate", {"expression": _CAPTURE_JS})
-        except CdpError as e:
-            log.warning("initial recorder injection failed: %s", e)
+        # install into every frame that is already open as well.
+        #
+        # PHASE 8: this MUST cover child frames. Clicks inside an iframe do not
+        # bubble to the parent document, so a main-frame-only listener records
+        # nothing from the app's real content — on the reference AUT the entire
+        # dashboard lives in `iframe[name='Main']`, and 15 of 16 frames were
+        # being left without a listener.
+        installed = await self._install_all_frames(cdp)
+        log.info("[recorder] capture script installed in %d frame(s)", installed)
+
+        # Re-inject whenever a frame gets a new document mid-recording (SPA
+        # frame swaps are constant on this app).
+        if not self._ctx_hooked:
+            cdp.on_frame_context(self._on_new_frame_context)
+            self._ctx_hooked = True
 
         self.recording = True
         self.started_at = datetime.now(timezone.utc).isoformat()
@@ -326,10 +381,20 @@ class InteractionRecorder:
                 except CdpError:
                     pass
                 self._script_id = None
-            try:
-                await cdp.send("Runtime.evaluate", {"expression": _TEARDOWN_JS})
-            except CdpError:
-                pass
+            # Tear down in every frame we injected into, not just the main one.
+            contexts = dict(getattr(cdp, "frame_contexts", {}) or {})
+            if contexts:
+                for ctx_id in contexts.values():
+                    try:
+                        await cdp.send("Runtime.evaluate",
+                                       {"expression": _TEARDOWN_JS, "contextId": ctx_id})
+                    except CdpError:
+                        pass
+            else:
+                try:
+                    await cdp.send("Runtime.evaluate", {"expression": _TEARDOWN_JS})
+                except CdpError:
+                    pass
             try:
                 await cdp.send("Runtime.removeBinding", {"name": BINDING_NAME})
             except CdpError:
@@ -357,7 +422,12 @@ class InteractionRecorder:
             seq = data.get("seq")
             if seq is None:
                 return
-            identity = await self._resolve_node(cdp, seq, params.get("executionContextId"))
+            ctx_id = params.get("executionContextId")
+            identity = await self._resolve_node(cdp, seq, ctx_id)
+            # PHASE 8: which frame did this click happen in? Needed both to
+            # validate uniqueness in the right document and to emit a locator
+            # carrying the required switchTo().frame(...) / frameLocator(...).
+            frame_id = cdp.frame_for_context(ctx_id) if hasattr(cdp, "frame_for_context") else None
         except Exception:  # noqa: BLE001
             log.exception("[recorder] node resolution failed")
             return
@@ -367,11 +437,26 @@ class InteractionRecorder:
         # so they run one capture at a time.
         async with self._resolve_lock:
             try:
-                await self._capture(data, identity)
+                await self._capture(data, identity, frame_id)
             except Exception:  # noqa: BLE001
                 log.exception("[recorder] capture failed")
 
-    async def _capture(self, data: dict, identity: tuple) -> None:
+    async def _frame_chain_for(self, cdp: CdpEngine, frame_id: Optional[str]) -> list:
+        """Ordered FrameRef chain for `frame_id`, cached across captures."""
+        if not frame_id:
+            return []
+        if frame_id in self._frame_chains:
+            return self._frame_chains[frame_id]
+        try:
+            from .frame_traverser import enumerate_frames
+            for info in await enumerate_frames(cdp, include_noise=True):
+                self._frame_chains[info.frame_id] = info.chain
+        except Exception:  # noqa: BLE001
+            log.debug("[recorder] frame chain lookup failed", exc_info=True)
+        return self._frame_chains.get(frame_id, [])
+
+    async def _capture(self, data: dict, identity: tuple,
+                       frame_id: Optional[str] = None) -> None:
         cdp = await self._cdp_getter()
         backend_id, dom_attrs, dom_tag = identity
 
@@ -391,6 +476,8 @@ class InteractionRecorder:
             name=ax_name or data.get("text") or None,
             attributes={**attrs, "tag": tag} if tag else attrs,
             element_type="interactive",
+            frame_id=frame_id,
+            frame_chain=await self._frame_chain_for(cdp, frame_id),
         )
         # Uniqueness can only be checked against a live document.
         cands = await resolve_for_node(cdp, node, self._config.locators, validate=alive)
