@@ -31,3 +31,6 @@ target/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local session handoff notes — not project documentation, never committed
+HANDOFF_*.md

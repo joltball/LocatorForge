@@ -177,13 +177,32 @@ def test_nth_variant_inherits_base_strategy_priority():
 
 
 def test_css_to_xpath_conversion_is_conservative():
-    """Bare tags convert; anything else must refuse rather than emit bad XPath."""
+    """Only the selector shapes this module emits convert; the rest refuse
+    rather than emit invalid XPath."""
     assert _as_xpath("mat-card", "css") == "//mat-card"
     assert _as_xpath("//mat-card[@id='x']", "xpath") == "//mat-card[@id='x']"
-    # Compound/attribute CSS is NOT naively converted.
+    # Simple attribute selectors convert — without this a duplicated element
+    # falls back to indexing a bare tag, e.g. (//button)[3] instead of the far
+    # more durable (//button[@aria-label='Delete'])[1].
+    assert _as_xpath("button[aria-label='Delete']", "css") == "//button[@aria-label='Delete']"
+    assert _as_xpath("[data-testid='a']", "css") == "//*[@data-testid='a']"
+    # Compound selectors and id shorthand are NOT naively converted.
     assert _as_xpath("mat-card:has(x[y='z'])", "css") is None
-    assert _as_xpath("[data-testid='a']", "css") is None
     assert _as_xpath("#some-id", "css") is None
+    # A value containing a quote would break the XPath literal.
+    assert _as_xpath("button[aria-label=\"it's\"]", "css") is None
+
+
+def test_positional_prefers_the_most_discriminating_base():
+    """The index should be applied to the best convertible candidate, not the
+    first one that happens to convert."""
+    from locatorforge.locator_resolver import _BARE_TAG_RE
+    # aria-label ranks above css in the default priority, so a non-unique
+    # aria-label candidate must be the base rather than the bare tag.
+    cfg = LocatorsCfg()
+    assert cfg.priority.index("aria-label") < cfg.priority.index("css")
+    assert _as_xpath("button[aria-label='View']", "css") is not None
+    assert _BARE_TAG_RE.match("button")
 
 
 def test_ranking_places_descendant_above_generic_fallbacks():

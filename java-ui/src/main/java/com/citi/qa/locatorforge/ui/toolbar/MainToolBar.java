@@ -51,7 +51,10 @@ public final class MainToolBar extends JToolBar {
         add(refresh);
 
         JButton add = new JButton("Add Element");
-        add.setToolTipText("Activate inspect mode in Chrome — click a verification element");
+        // TEMPORARILY DISABLED — not resolving elements correctly. Re-enable by
+        // removing this line once the picker flow is fixed.
+        add.setEnabled(false);
+        add.setToolTipText("Temporarily disabled — not working as expected");
         add.addActionListener(e -> onAddElement());
         add(add);
 
@@ -78,6 +81,10 @@ public final class MainToolBar extends JToolBar {
         addSeparator();
 
         JButton push = new JButton("Push to POM");
+        // TEMPORARILY DISABLED — not resolving elements correctly. Re-enable by
+        // removing this line once the push flow is fixed.
+        push.setEnabled(false);
+        push.setToolTipText("Temporarily disabled — not working as expected");
         push.addActionListener(e -> onPush());
         add(push);
     }

@@ -141,8 +141,40 @@ class _AppState:
             payload = await self._pick_partial(backend_id)
             await self.ws.broadcast("element_picked", payload)
 
+        async def on_target_changed(info: dict) -> None:
+            """The page target itself was replaced (popup opened, opener closed).
+
+            Everything target-scoped is now invalid: node ids, backendNodeIds,
+            frame contexts, and any injected recorder script.
+            """
+            url = info.get("url")
+            log.info("[target] followed to %s", (url or "")[:80])
+            self.tree_cache = None
+            self.flat_cache = {}
+            self.ipc.write_status(current_url=url)
+            await self.ws.broadcast("target_changed", {
+                "url": url,
+                "title": info.get("title"),
+                "target_id": info.get("target_id"),
+            })
+            # Give the new document a moment to build before snapshotting it.
+            await asyncio.sleep(0.8)
+            # Recording must continue across the window swap — the new target's
+            # frames have no capture script until we re-inject.
+            try:
+                if self.recorder.recording:
+                    await self.recorder.reinstall()
+            except Exception as e:  # noqa: BLE001
+                log.warning("recorder re-install after target change failed: %s", e)
+            try:
+                await asyncio.wait_for(self.refresh_tree(), timeout=15)
+                await self.ws.broadcast("tree_updated", {})
+            except Exception as e:  # noqa: BLE001
+                log.warning("tree refresh after target change failed: %s", e)
+
         cdp.on_event("Page.frameNavigated", on_frame_navigated)
         cdp.on_event("Overlay.inspectNodeRequested", on_inspect_picked)
+        cdp.on_target_changed(on_target_changed)
 
     async def _pick_partial(self, backend_node_id: int) -> dict:
         cdp = await self.ensure_cdp()
@@ -429,14 +461,37 @@ def create_app(repo_root: Path, config: Optional[Config] = None) -> FastAPI:
 
     @app.get("/targets")
     async def list_targets() -> dict[str, Any]:
-        """Phase 4 multi-tab: list page targets via CDP HTTP discovery endpoint."""
+        """List page targets, marking which one the engine is attached to."""
         import requests
         r = requests.get(f"http://127.0.0.1:{cfg.cdp.debug_port}/json", timeout=2)
         items = [t for t in r.json() if t.get("type") == "page"]
-        return {"targets": [
-            {"id": t.get("id"), "title": t.get("title"), "url": t.get("url")}
+        attached = state.cdp._target_id if state.cdp else None
+        return {"attached_target_id": attached, "targets": [
+            {
+                "id": t.get("id"),
+                "title": t.get("title"),
+                "url": t.get("url"),
+                "attached": t.get("id") == attached,
+            }
             for t in items
         ]}
+
+    @app.post("/targets/{target_id}/attach")
+    async def attach_target(target_id: str) -> dict[str, Any]:
+        """Manually attach to a specific page target.
+
+        Automatic following handles the common popup case; this is the override
+        for when several windows are open and the wrong one was chosen.
+        """
+        import requests
+        cdp = await state.ensure_cdp()
+        r = requests.get(f"http://127.0.0.1:{cfg.cdp.debug_port}/json", timeout=2)
+        match = next((t for t in r.json()
+                      if t.get("id") == target_id and t.get("type") == "page"), None)
+        if match is None:
+            raise HTTPException(status_code=404, detail=f"no page target {target_id}")
+        await cdp.rebind_to(match)
+        return {"attached_target_id": target_id, "url": match.get("url")}
 
     @app.get("/pom/search")
     async def pom_search() -> dict[str, Any]:

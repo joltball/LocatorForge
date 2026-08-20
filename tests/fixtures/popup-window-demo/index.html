@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Demo Bank — Portal</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; color: #222; }
+  h1 { font-size: 1.3rem; }
+  a.launch { display: inline-block; font-size: 1rem; padding: 0.6rem 1.2rem;
+             background: #0b5ed7; color: #fff; text-decoration: none; border-radius: 4px; }
+  a.launch:hover { background: #094db3; }
+  p { color: #555; line-height: 1.5; }
+  #status { margin-top: 1rem; font-size: 0.85rem; color: #888; }
+</style>
+</head>
+<body>
+  <h1>Demo Bank — Portal (step 2 of 3)</h1>
+  <p>
+    This window stands in for the app's own login/landing page. Clicking the
+    link below reproduces the real behavior being tested: it opens the account
+    workspace as a <strong>separate popup window</strong> and then closes this
+    tab — so LocatorForge's original CDP target disappears while a new one
+    with a different <code>targetId</code> takes its place.
+  </p>
+  <a class="launch" id="open-portal" href="#" role="link" aria-label="Open Secure Portal">
+    Open Secure Portal
+  </a>
+  <div id="status"></div>
+  <script>
+    document.getElementById('open-portal').addEventListener('click', (e) => {
+      e.preventDefault();
+      const popup = window.open(
+        'popup.html', 'AccountWorkspace',
+        'width=1000,height=700,left=100,top=80'
+      );
+      document.getElementById('status').textContent =
+        popup ? 'Opened popup — closing this window in 1.5s…'
+              : 'Popup was blocked. Allow popups for this page and retry.';
+      if (popup) {
+        setTimeout(() => window.close(), 1500);
+      }
+    });
+  </script>
+</body>
+</html>

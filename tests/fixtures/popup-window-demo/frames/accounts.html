@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Accounts</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0.75rem; color: #222; }
+  .card { border: 1px solid #dde2e7; border-radius: 6px; padding: 0.7rem 0.9rem;
+          margin-bottom: 0.6rem; cursor: pointer; position: relative; }
+  .card:focus, .card:hover { border-color: #0b5ed7; }
+  .card .stale { position: absolute; top: 0.6rem; right: 0.7rem; color: #b45309; font-size: 0.8rem; }
+  .card h3 { margin: 0 0 0.3rem; font-size: 0.95rem; }
+  .card .balance { color: #555; font-size: 0.85rem; }
+  h1 { font-size: 0.85rem; color: #888; margin: 0 0 0.6rem; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>4 accounts, 2 sharing an identical title (positional-fallback case)</h1>
+
+  <!-- Uniquely identifiable card -->
+  <div class="card" role="link" tabindex="0" data-account="acc-1001">
+    <span class="stale" aria-label="Balance may be delayed">⚠</span>
+    <h3 aria-label="Everyday Checking — Priya Shah">Everyday Checking — Priya Shah</h3>
+    <div class="balance">USD 4,201.10</div>
+  </div>
+
+  <!-- Uniquely identifiable card -->
+  <div class="card" role="link" tabindex="0" data-account="acc-1002">
+    <span class="stale" aria-label="Balance may be delayed">⚠</span>
+    <h3 aria-label="High-Yield Savings — Priya Shah">High-Yield Savings — Priya Shah</h3>
+    <div class="balance">USD 18,940.55</div>
+  </div>
+
+  <!-- Two cards with an IDENTICAL title and no distinguishing attribute —
+       forces the positional (…)[n] fallback, reproducing the duplicate-card
+       shape seen on real applications. -->
+  <div class="card" role="link" tabindex="0">
+    <span class="stale" aria-label="Balance may be delayed">⚠</span>
+    <h3 aria-label="Joint Trust Account">Joint Trust Account</h3>
+    <div class="balance">USD 102,884.02</div>
+  </div>
+  <div class="card" role="link" tabindex="0">
+    <span class="stale" aria-label="Balance may be delayed">⚠</span>
+    <h3 aria-label="Joint Trust Account">Joint Trust Account</h3>
+    <div class="balance">USD 56,730.19</div>
+  </div>
+</body>
+</html>
