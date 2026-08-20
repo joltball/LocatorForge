@@ -70,7 +70,8 @@ Everything binds to `127.0.0.1`.
 | POST | `/element/pick` | Enter inspect mode |
 | POST | `/validate` | Validate a custom locator |
 | POST/GET/DELETE | `/record`, `/record/start`, `/record/stop` | Recording lifecycle |
-| GET | `/targets` | Open browser tabs |
+| GET | `/targets` | Open browser tabs, marking the attached one |
+| POST | `/targets/{id}/attach` | Manually attach to a specific window |
 | GET/POST | `/pom/search`, `/pom/select` | Page Object detection |
 | POST | `/push` | Write `output.json` |
 | WS | `/ws` | Server-push events |
@@ -136,6 +137,34 @@ The index is **measured**, not inferred: `DOM.resolveNode` yields a JS handle an
 Parenthesisation is load-bearing: `(//x)[2]` is the second match overall, while `//x[2]` is every `x` that is the second child of its parent.
 
 Safety rails: generated only when nothing is naturally unique; ranked strictly below any stable unique locator; surfaced to the UI via `is_positional` so testers see the risk before adopting one.
+
+### ADR-10 — The engine follows the target, not the tab
+A page target is not permanent. Applications that open a popup and close the
+opener replace the target entirely, with a different `targetId`. Binding to one
+target for the process lifetime meant the tool died with the old window.
+
+A **browser-level** CDP connection (separate from the page connection) subscribes
+to `Target.setDiscoverTargets`. It has to be separate: when the page target dies
+its socket dies with it, so target lifecycle cannot be observed from there.
+
+On `Target.targetDestroyed` for the attached target, the engine polls briefly for
+a replacement — the popup may be created slightly before or after the opener
+closes — then rebinds: old socket and reader torn down, in-flight calls failed
+rather than left hanging, frame contexts cleared (they are target-scoped), and
+listeners notified.
+
+Consumers must treat a target change as total invalidation. `api_server` clears
+the node caches and re-runs discovery; `interaction_recorder.reinstall()`
+re-registers its capture script, because `addScriptToEvaluateOnNewDocument` was
+registered against the *old* target and does not carry over.
+
+Reconnect distinguishes the two reasons a socket closes: a transient drop (same
+target still listed — reattach to it) versus target destruction (re-pick). Doing
+otherwise would reattach to a dead `targetId` forever.
+
+Automatic selection prefers the most recently created real page target.
+`POST /targets/{id}/attach` is the manual override for when several windows are
+open and the wrong one wins.
 
 ## Element discovery pipeline
 

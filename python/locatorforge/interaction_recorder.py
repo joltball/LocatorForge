@@ -314,6 +314,30 @@ class InteractionRecorder:
                 log.debug("recorder injection skipped for frame %s: %s", frame_id[:8], e)
         return installed
 
+    async def reinstall(self) -> int:
+        """Re-inject the capture script after the page target was replaced.
+
+        A popup that replaces its opener is an entirely new target: no frame in
+        it has ever seen our script, and `addScriptToEvaluateOnNewDocument` was
+        registered against the OLD target, so it does not carry over.
+        """
+        cdp = await self._cdp_getter()
+        self._frame_chains.clear()      # frame ids belong to the old target
+        try:
+            res = await cdp.send(
+                "Page.addScriptToEvaluateOnNewDocument", {"source": _CAPTURE_JS}
+            )
+            self._script_id = res.get("identifier")
+        except CdpError as e:
+            log.warning("re-registering capture script failed: %s", e)
+        try:
+            await cdp.send("Runtime.addBinding", {"name": BINDING_NAME})
+        except CdpError:
+            pass
+        installed = await self._install_all_frames(cdp)
+        log.info("[recorder] re-installed into %d frame(s) after target change", installed)
+        return installed
+
     async def _on_new_frame_context(self, frame_id: str, ctx_id: int) -> None:
         """A frame loaded a new document — install the listener into it."""
         if not self.recording:

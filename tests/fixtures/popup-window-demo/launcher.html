@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LocatorForge fixture — launcher</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 4rem auto; color: #222; }
+  h1 { font-size: 1.3rem; }
+  button { font-size: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
+  p { color: #555; line-height: 1.5; }
+  code { background: #f0f0f0; padding: 0.1rem 0.35rem; border-radius: 3px; }
+</style>
+</head>
+<body>
+  <h1>LocatorForge popup-window fixture</h1>
+  <p>
+    This is <strong>step 1 of 3</strong>. Chrome only allows a script to
+    <code>window.close()</code> a tab that a script itself opened — a normally
+    navigated tab cannot self-close. Click below to open <code>index.html</code>
+    via <code>window.open()</code>, which makes the close-then-popup flow in step 2
+    behave exactly like the real application.
+  </p>
+  <button id="start">Start App →</button>
+  <script>
+    document.getElementById('start').addEventListener('click', () => {
+      window.open('index.html', 'LFApp', 'width=1100,height=750');
+    });
+  </script>
+</body>
+</html>

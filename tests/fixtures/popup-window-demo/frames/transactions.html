@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Transactions</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0.75rem; color: #222; }
+  h1 { font-size: 0.85rem; color: #888; margin: 0 0 0.6rem; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #eee; }
+  button.action { border: 1px solid #0b5ed7; color: #0b5ed7; background: #fff;
+                  border-radius: 4px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.8rem; }
+  button.action:hover { background: #eef4ff; }
+</style>
+</head>
+<body>
+  <h1>Different DOM shape — table rows instead of cards</h1>
+  <table>
+    <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td>08/18</td><td>Grocery Mart</td><td>-USD 64.20</td>
+        <td><button class="action" aria-label="View Grocery Mart transaction">View</button></td>
+      </tr>
+      <tr>
+        <td>08/17</td><td>Payroll Deposit</td><td>+USD 3,120.00</td>
+        <td><button class="action" aria-label="View Payroll Deposit transaction">View</button></td>
+      </tr>
+      <!-- Two rows with identical description AND identical button label —
+           another positional-fallback case, in a table rather than a card. -->
+      <tr>
+        <td>08/16</td><td>Coffee Shop</td><td>-USD 5.75</td>
+        <td><button class="action" aria-label="View Coffee Shop transaction">View</button></td>
+      </tr>
+      <tr>
+        <td>08/16</td><td>Coffee Shop</td><td>-USD 4.50</td>
+        <td><button class="action" aria-label="View Coffee Shop transaction">View</button></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Demo Bank — Account Workspace</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; color: #222; background: #f4f6f8; }
+  header { background: #0b5ed7; color: #fff; padding: 0.75rem 1.25rem; font-size: 1.1rem; }
+  main { padding: 1rem; }
+  .row { display: flex; gap: 1rem; }
+  .panel { background: #fff; border: 1px solid #dde2e7; border-radius: 6px; overflow: hidden; }
+  .panel h2 { margin: 0; padding: 0.6rem 0.9rem; font-size: 0.9rem; background: #eef2f6; border-bottom: 1px solid #dde2e7; }
+  iframe { border: 0; width: 100%; display: block; }
+  #accounts-frame { height: 420px; }
+  #transactions-frame { height: 420px; }
+</style>
+</head>
+<body>
+  <header>Demo Bank — Account Workspace (step 3 of 3 — the real target)</header>
+  <main>
+    <p style="max-width:60ch;color:#555;font-size:0.9rem">
+      This window is what LocatorForge needs to attach to. It contains three
+      iframes: two carry real content, one is a stand-in for an analytics/
+      fingerprinting frame that should stay <em>filtered out</em> of the tree —
+      same as <code>frame_traverser.py</code>'s existing noise filter already
+      does on the reference application.
+    </p>
+    <div class="row">
+      <section class="panel" style="flex:1">
+        <h2>Accounts</h2>
+        <iframe id="accounts-frame" src="frames/accounts.html" title="Accounts"></iframe>
+      </section>
+      <section class="panel" style="flex:1">
+        <h2>Recent Transactions</h2>
+        <iframe id="transactions-frame" src="frames/transactions.html" title="Transactions"></iframe>
+      </section>
+    </div>
+  </main>
+
+  <!-- Noise frame: id matches the existing _NOISE_SELECTOR_HINTS pattern
+       ("tmx_tags_iframe") so frame_traverser should skip it, same as it does
+       on the real AUT's ThreatMetrix frame. Zero visible size, no interactive
+       content — should never appear as a boundary node. -->
+  <iframe id="tmx_tags_iframe_demo" src="frames/telemetry.html"
+          style="width:0;height:0;border:0;position:absolute" aria-hidden="true"></iframe>
+</body>
+</html>

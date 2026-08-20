@@ -40,6 +40,7 @@ LocatorForge shows you every candidate locator for an element, **validates each 
 
 **Element discovery**
 - Interactive element tree extracted from Chrome's accessibility layer
+- **Follows popup windows** — if the app opens a new window and closes the old one, LocatorForge re-attaches automatically and keeps going
 - **Iframe traversal** — content inside same-process frames is spied and spliced into the tree
 - **Shadow DOM traversal** (open roots, configurable depth)
 - Element picker for verification points that Chrome considers "uninteresting"
@@ -291,6 +292,7 @@ All written to `<repo-root>/.locatorforge/`. Writes are atomic (temp file + rena
 | `Chrome launched but did not start CDP on 127.0.0.1:9222` | A Chrome instance is already using that profile. Close all Chrome windows, or pass `--port 9333` |
 | Tree is empty after Refresh | The page had not finished loading. Wait for it to settle and press Refresh again |
 | Tree shows only top-level navigation | The app's content is in an iframe that had not loaded when you refreshed. Press Refresh again |
+| After a popup opened, the tree shows the wrong window | Automatic following picks the most recent window. With several open, choose explicitly: `GET /targets` then `POST /targets/{id}/attach` |
 | Elements inside an iframe are not recorded | Restart the recording after the frame has loaded |
 | `Only DevTools/internal pages are open` | Navigate a tab to your application; DevTools windows are ignored deliberately |
 | Port `8765` already in use | Pass `--api-port 8766` |

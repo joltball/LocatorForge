@@ -503,18 +503,36 @@ def _apply_shadow_chain(cands: list[LocatorCandidate], chain: list[ShadowHostRef
 
 _INDEXABLE_KINDS = ("xpath",)
 _BARE_TAG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+# `tag[attr='value']`, `[attr='value']` — the shapes our own CSS candidates use.
+_TAG_ATTR_RE = re.compile(
+    r"^([a-z][a-z0-9-]*)?\[([a-zA-Z_:][\w:.-]*)=['\"]([^'\"]*)['\"]\]$"
+)
 
 
 def _as_xpath(expr: str, kind: str) -> Optional[str]:
     """Return an XPath equivalent of `expr`, or None if we can't safely convert.
 
-    Only bare tag selectors are converted from CSS — general CSS→XPath is not
-    worth the failure modes, and Playwright's .nth() covers the rest.
+    Deliberately narrow: only the selector shapes this module itself emits are
+    converted. General CSS→XPath is not worth the failure modes.
+
+    Converting `tag[attr='v']` matters for locator QUALITY, not just coverage —
+    without it a duplicated element falls back to indexing a bare tag,
+    producing `(//button)[3]` where `(//button[@aria-label='Delete'])[1]` was
+    available. Both are unique; only one survives an unrelated button being
+    added to the page.
     """
     if kind == "xpath":
         return expr
-    if kind == "css" and _BARE_TAG_RE.match(expr):
+    if kind != "css":
+        return None
+    if _BARE_TAG_RE.match(expr):
         return f"//{expr}"
+    m = _TAG_ATTR_RE.match(expr)
+    if m:
+        tag, attr, value = m.group(1) or "*", m.group(2), m.group(3)
+        if "'" in value:            # would break the XPath literal
+            return None
+        return f"//{tag}[@{attr}='{value}']"
     return None
 
 
