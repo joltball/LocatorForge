@@ -45,7 +45,13 @@ class SearchCfg(BaseModel):
 
 class LocatorsCfg(BaseModel):
     priority: list[str] = Field(default_factory=lambda: [
-        "data-testid", "aria-label", "id", "name", "css", "xpath",
+        # Direct attributes on the element itself — most stable.
+        "data-testid", "aria-label", "id", "name",
+        # PHASE 6: component frameworks put identity on a descendant (card
+        # title, label), so these rank above the generic fallbacks.
+        "descendant-attr", "descendant-text",
+        # Generic fallbacks — usually non-unique on their own.
+        "role", "css", "xpath",
     ])
     default_format: Literal["selenium", "playwright"] = "selenium"
 

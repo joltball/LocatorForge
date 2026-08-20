@@ -231,18 +231,32 @@ def normalize_snapshot(snapshot: dict) -> Optional[TreeNode]:
 
 MAX_NODES = 2000     # raw AX nodes (many will be ignored). Final filtered
                      # tree typically lands ~10× smaller per SPEC §11.
+                     # PHASE 5: this is a PER-FRAME budget — frames must not
+                     # starve each other (the reference AUT's dashboard frame
+                     # alone exceeded 400 raw nodes).
 MAX_DEPTH = 25
 
 
-async def _lazy_walk(cdp: CdpEngine) -> Optional[dict]:
-    """BFS-walk the AX tree via getRootAXNode + getChildAXNodes."""
+async def _lazy_walk(cdp: CdpEngine, frame_id: Optional[str] = None) -> Optional[dict]:
+    """BFS-walk the AX tree via getRootAXNode + getChildAXNodes.
+
+    `frame_id` scopes the walk to one frame's document (PHASE 5). AXNodeIds are
+    frame-scoped, so every call in the walk must carry the same frameId. When
+    None, Chrome uses the root frame — preserving pre-Phase-5 behavior exactly.
+    """
     import time
     t0 = time.monotonic()
-    log.info("[lazy_walk] calling Accessibility.getRootAXNode")
-    root_resp = await cdp.send("Accessibility.getRootAXNode", {})
+    tag = f"frame {frame_id[:8]}" if frame_id else "main frame"
+    scope = {"frameId": frame_id} if frame_id else {}
+    log.info("[lazy_walk] getRootAXNode (%s)", tag)
+    try:
+        root_resp = await cdp.send("Accessibility.getRootAXNode", dict(scope))
+    except CdpError as e:
+        log.warning("[lazy_walk] getRootAXNode failed for %s: %s", tag, e)
+        return None
     root = root_resp.get("node") if isinstance(root_resp, dict) else None
     if not root:
-        log.warning("[lazy_walk] getRootAXNode returned no node: %r", root_resp)
+        log.warning("[lazy_walk] getRootAXNode returned no node for %s", tag)
         return None
 
     root_role = (root.get("role") or {}).get("value")
@@ -266,7 +280,9 @@ async def _lazy_walk(cdp: CdpEngine) -> Optional[dict]:
         if not (cur.get("childIds") or []):
             continue
         try:
-            resp = await cdp.send("Accessibility.getChildAXNodes", {"id": cur["nodeId"]})
+            child_params = {"id": cur["nodeId"]}
+            child_params.update(scope)   # frameId, when frame-scoped
+            resp = await cdp.send("Accessibility.getChildAXNodes", child_params)
             round_trips += 1
             if round_trips % 25 == 0:
                 log.info("[lazy_walk] %d round-trips, %d nodes so far", round_trips, len(order))
@@ -292,20 +308,92 @@ async def _lazy_walk(cdp: CdpEngine) -> Optional[dict]:
 
     elapsed = time.monotonic() - t0
     log.info(
-        "[lazy_walk] done in %.2fs — %d nodes emitted, %d round-trips, %d failed",
-        elapsed, len(order), round_trips, fail_count,
+        "[lazy_walk] %s done in %.2fs — %d nodes, %d round-trips, %d failed",
+        tag, elapsed, len(order), round_trips, fail_count,
     )
     return {"nodes": order}
 
 
-async def fetch_tree(cdp: CdpEngine) -> Optional[TreeNode]:
-    """Fetch the live page's accessibility tree.
+def _tag_frame_context(node: TreeNode, frame_id: str, chain: list) -> None:
+    """Stamp frame identity on an entire subtree so downstream consumers
+    (locator resolution, uniqueness validation, highlight) can scope correctly."""
+    node.frame_id = frame_id
+    node.frame_chain = list(chain)
+    for child in node.children:
+        _tag_frame_context(child, frame_id, chain)
 
-    Strategy: lazy BFS via getRootAXNode + getChildAXNodes. This avoids
-    `getFullAXTree`'s multi-megabyte single response (which timed out the CDP
-    socket on real pages) and the now-removed `Accessibility.getSnapshot`.
+
+def _count_meaningful(node: TreeNode) -> int:
+    """Nodes that would actually be useful to a tester (named or interactive)."""
+    total = 1 if (node.element_type == "interactive" or (node.name or "").strip()) else 0
+    return total + sum(_count_meaningful(c) for c in node.children)
+
+
+async def fetch_tree(cdp: CdpEngine, include_frames: bool = True) -> Optional[TreeNode]:
+    """Fetch the live page's accessibility tree, including iframe content.
+
+    Strategy: lazy BFS via getRootAXNode + getChildAXNodes (avoids
+    `getFullAXTree`'s multi-megabyte response and the removed `getSnapshot`).
+
+    PHASE 5: after walking the main frame, every same-process child frame is
+    walked with its own `frameId` and spliced in as a collapsible boundary node.
+    Frames that yield nothing meaningful are dropped so instrumentation iframes
+    (fingerprinting, tag managers) don't litter the tree.
     """
     snapshot = await _lazy_walk(cdp)
     if not snapshot:
         return None
-    return normalize_snapshot(snapshot)
+    root = normalize_snapshot(snapshot)
+    if root is None or not include_frames:
+        return root
+
+    try:
+        from .frame_traverser import enumerate_frames
+        frames = await enumerate_frames(cdp)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[frames] enumeration failed, returning main frame only: %s", e)
+        return root
+
+    if not frames:
+        return root
+
+    attached = 0
+    for info in frames:
+        try:
+            sub_snapshot = await _lazy_walk(cdp, frame_id=info.frame_id)
+        except Exception as e:  # noqa: BLE001
+            log.debug("[frames] walk failed for %s: %s", info.selector, e)
+            continue
+        if not sub_snapshot:
+            continue
+        sub_root = normalize_snapshot(sub_snapshot)
+        if sub_root is None:
+            continue
+
+        meaningful = _count_meaningful(sub_root)
+        if meaningful == 0:
+            log.info("[frames] skipping %s — no meaningful nodes", info.selector)
+            continue
+
+        _tag_frame_context(sub_root, info.frame_id, info.chain)
+
+        boundary = TreeNode(
+            node_id=f"n{next(_id_counter)}",
+            role="iframe",
+            name=info.selector or info.url[:60],
+            element_type="structural",
+            is_frame_boundary=True,
+            frame_id=info.frame_id,
+            frame_chain=list(info.chain),
+            attributes={"src": info.url[:200], "selector": info.selector or ""},
+            children=[sub_root],
+        )
+        root.children.append(boundary)
+        attached += 1
+        log.info(
+            "[frames] attached %s — %d meaningful node(s)",
+            info.selector, meaningful,
+        )
+
+    log.info("[frames] %d frame subtree(s) spliced into the tree", attached)
+    return root

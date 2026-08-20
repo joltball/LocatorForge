@@ -39,7 +39,13 @@ public final class LocatorEditorPanel extends JPanel {
     public LocatorEditorPanel(LocatorClient client) {
         super(new BorderLayout());
         this.client = client;
-        this.table = new JTable(model);
+        this.table = new JTable(model) {
+            @Override public String getToolTipText(java.awt.event.MouseEvent e) {
+                int row = rowAtPoint(e.getPoint());
+                String t = model.tooltipFor(row);
+                return t != null ? t : super.getToolTipText(e);
+            }
+        };
         table.getColumnModel().getColumn(0).setCellRenderer(new BadgeRenderer());
         table.setRowHeight(22);
         table.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -167,10 +173,38 @@ public final class LocatorEditorPanel extends JPanel {
         }
 
         private String badge(JSONObject c) {
-            if (c.has("is_unique") && !c.isNull("is_unique") && c.getBoolean("is_unique")) return "✓";
+            boolean unique = c.has("is_unique") && !c.isNull("is_unique")
+                    && c.getBoolean("is_unique");
+            // A positional locator is unique but ORDER-DEPENDENT: it breaks the
+            // moment the list re-sorts, filters or pages. Never show it with the
+            // same green tick as a stable locator.
+            if (unique && c.optBoolean("is_positional", false)) {
+                int idx = c.isNull("position_index") ? 0 : c.optInt("position_index", 0);
+                return "#" + (idx + 1);
+            }
+            if (unique) return "✓";
             if (!c.has("match_count") || c.isNull("match_count")) return "?";
             int n = c.getInt("match_count");
             return n == 0 ? "⚠0" : "✗" + n;
+        }
+
+        String tooltipFor(int row) {
+            if (row < 0 || row >= cands.length()) return null;
+            JSONObject c = cands.getJSONObject(row);
+            if (c.optBoolean("is_positional", false)) {
+                return "<html><b>Order-dependent locator.</b><br>"
+                     + "No stable attribute distinguishes this element from its "
+                     + "siblings, so it is pinned by index.<br>"
+                     + "It will silently target a <i>different</i> element if the "
+                     + "list is re-sorted, filtered or paged.<br>"
+                     + "Prefer asking the developers for a data-testid.</html>";
+            }
+            if (!c.isNull("match_count") && c.optInt("match_count", -1) == 0) {
+                return "Does not resolve against the live page.";
+            }
+            int n = c.optInt("match_count", -1);
+            if (n > 1) return n + " elements match — not unique.";
+            return null;
         }
     }
 
@@ -183,6 +217,8 @@ public final class LocatorEditorPanel extends JPanel {
             l.setHorizontalAlignment(SwingConstants.CENTER);
             String v = String.valueOf(value);
             if ("✓".equals(v)) l.setForeground(new Color(0, 130, 0));
+            // Amber: unique, but pinned by index — usable with caution.
+            else if (v.startsWith("#")) l.setForeground(new Color(190, 120, 0));
             else if (v.startsWith("✗") || v.startsWith("⚠")) l.setForeground(new Color(180, 0, 0));
             else l.setForeground(Color.GRAY);
             if (isSelected) l.setBackground(table.getSelectionBackground());

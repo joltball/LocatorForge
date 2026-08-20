@@ -25,6 +25,20 @@ class ShadowHostRef(BaseModel):
     shadow_type: Literal["open", "closed"] = "open"
 
 
+class FrameRef(BaseModel):
+    """One hop in an iframe chain (PHASE 5, ADR-07).
+
+    `selector` targets the <iframe> element in its *parent* document, which is
+    what Selenium's switchTo().frame() and Playwright's frameLocator() need.
+    `is_oopif` records whether the frame was reached over its own CDP session
+    (cross-origin) rather than via frameId on the page session.
+    """
+    frame_id: str
+    url: Optional[str] = None
+    selector: Optional[str] = None
+    is_oopif: bool = False
+
+
 class Modification(BaseModel):
     action: Literal["update", "add"]
     element_name: str
@@ -38,6 +52,9 @@ class Modification(BaseModel):
     new_locator: LocatorValue
     annotation_format: str
     shadow_chain: list[ShadowHostRef] = Field(default_factory=list)
+    # PHASE 5: ordered iframe chain from top document to the element's frame.
+    # Empty when the element is in the main frame.
+    frame_chain: list[FrameRef] = Field(default_factory=list)
     line_hint: Optional[int] = None
     insert_after: Optional[str] = None
     element_type: Literal["interactive", "verification"] = "interactive"
@@ -94,6 +111,11 @@ class TreeNode(BaseModel):
     attributes: dict[str, str] = Field(default_factory=dict)
     shadow_ancestors: list[ShadowHostRef] = Field(default_factory=list)
     is_shadow_boundary: bool = False
+    # PHASE 5: iframe context. `frame_id` is None for main-frame nodes, which
+    # keeps every existing code path on its current behavior.
+    frame_id: Optional[str] = None
+    frame_chain: list[FrameRef] = Field(default_factory=list)
+    is_frame_boundary: bool = False
     element_type: Literal["interactive", "verification", "structural"] = "interactive"
     children: list["TreeNode"] = Field(default_factory=list)
 

@@ -129,9 +129,14 @@ public final class ElementTreePanel extends JTree {
 
     /** Page identity is stamped on the root only; children inherit it. */
     private static DefaultMutableTreeNode buildNode(JSONObject n, String page, String pageUrl) {
-        Object payload = ShadowBoundaryNode.matches(n)
-                ? ShadowBoundaryNode.from(n)
-                : ElementNode.from(n, page, pageUrl);
+        Object payload;
+        if (ShadowBoundaryNode.matches(n)) {
+            payload = ShadowBoundaryNode.from(n);
+        } else if (FrameBoundaryNode.matches(n)) {
+            payload = FrameBoundaryNode.from(n);
+        } else {
+            payload = ElementNode.from(n, page, pageUrl);
+        }
         DefaultMutableTreeNode dn = new DefaultMutableTreeNode(payload);
         JSONArray children = n.optJSONArray("children");
         if (children != null) {

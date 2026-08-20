@@ -273,6 +273,8 @@ class ValidateRequest(BaseModel):
     strategy: str
     value: str
     shadow_chain: list[ShadowHostRef] = []
+    # PHASE 5: validate inside a specific iframe. None = main frame.
+    frame_id: Optional[str] = None
 
 
 class PomSelectRequest(BaseModel):
@@ -394,12 +396,13 @@ def create_app(repo_root: Path, config: Optional[Config] = None) -> FastAPI:
             rank=0,
             shadow_chain=req.shadow_chain,
         )
-        await validate_uniqueness(cdp, cand)
+        await validate_uniqueness(cdp, cand, frame_id=req.frame_id)
         return {
             "strategy": req.strategy,
             "value": req.value,
             "match_count": cand.match_count,
             "is_unique": cand.is_unique,
+            "frame_id": req.frame_id,
         }
 
     @app.post("/record/start")
@@ -496,6 +499,11 @@ def _cand_to_json(c: LocatorCandidate) -> dict:
         "match_count": c.match_count,
         "is_unique": c.is_unique,
         "shadow_chain": [s.model_dump() for s in c.shadow_chain],
+        "frame_chain": [f.model_dump() for f in c.frame_chain],
+        # PHASE 7: index-pinned locators are unique but order-dependent — the UI
+        # should mark them so a tester knows the risk before adopting one.
+        "is_positional": c.is_positional,
+        "position_index": c.position_index,
     }
 
 

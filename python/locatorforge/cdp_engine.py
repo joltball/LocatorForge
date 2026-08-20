@@ -113,12 +113,44 @@ def launch_or_attach_chrome(
     )
 
 
+# Targets that are type "page" but are never the application under test.
+# DevTools windows in particular register as ordinary page targets and often
+# sort FIRST, so a naive pages[0] silently attaches to DevTools instead of the
+# app — the tree then comes back as DevTools' own UI.
+_NON_APP_URL_PREFIXES = (
+    "devtools://",
+    "chrome://",
+    "chrome-extension://",
+    "chrome-untrusted://",
+    "edge://",
+)
+
+
+def _is_app_page(target: dict) -> bool:
+    url = (target.get("url") or "").lower()
+    return not any(url.startswith(p) for p in _NON_APP_URL_PREFIXES)
+
+
 def _first_page_target(debug_port: int) -> dict:
     targets = requests.get(f"http://127.0.0.1:{debug_port}/json", timeout=2).json()
     pages = [t for t in targets if t.get("type") == "page"]
     if not pages:
         raise CdpError("No 'page' targets available in Chrome — open a tab first.")
-    return pages[0]
+    app_pages = [t for t in pages if _is_app_page(t)]
+    if not app_pages:
+        raise CdpError(
+            "Only DevTools/internal pages are open — navigate a tab to the "
+            "application under test first."
+        )
+    # Prefer a non-blank page so a stray about:blank tab doesn't win.
+    real = [t for t in app_pages if (t.get("url") or "") not in ("about:blank", "")]
+    chosen = (real or app_pages)[0]
+    if len(pages) != len(app_pages):
+        log.info(
+            "Skipped %d DevTools/internal target(s); attaching to %s",
+            len(pages) - len(app_pages), (chosen.get("url") or "")[:80],
+        )
+    return chosen
 
 
 class CdpEngine:
@@ -132,6 +164,14 @@ class CdpEngine:
         self._event_handlers: dict[str, list[Callable[[dict], Awaitable[None]]]] = {}
         self._reader_task: Optional[asyncio.Task] = None
         self._target_id: Optional[str] = None
+        # PHASE 8: frameId -> default execution context id. Needed to run script
+        # inside a specific frame (the recorder must install its listener in
+        # EVERY frame, not just the main one).
+        self.frame_contexts: dict[str, int] = {}
+        self._context_frames: dict[int, str] = {}
+        # Callbacks fired when a frame gets a fresh default context, so long-
+        # running features (recording) can re-inject into SPA-swapped frames.
+        self._context_listeners: list[Callable[[str, int], Awaitable[None]]] = []
 
     async def connect(self) -> None:
         target = _first_page_target(self.debug_port)
@@ -149,6 +189,10 @@ class CdpEngine:
             close_timeout=5,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
+        # Register context tracking BEFORE Runtime.enable — enabling replays
+        # `executionContextCreated` for every context that already exists, and
+        # that replay is the only chance to learn about already-loaded frames.
+        self._wire_context_tracking()
         # Enable domains we always need
         for domain in ("Page", "DOM", "Accessibility", "Overlay", "Runtime"):
             try:
@@ -182,6 +226,51 @@ class CdpEngine:
 
     def on_event(self, method: str, handler: Callable[[dict], Awaitable[None]]) -> None:
         self._event_handlers.setdefault(method, []).append(handler)
+
+    # ---- PHASE 8: per-frame execution contexts ----------------------------
+
+    def frame_for_context(self, context_id: Optional[int]) -> Optional[str]:
+        """Which frame does this execution context belong to? None if unknown."""
+        if context_id is None:
+            return None
+        return self._context_frames.get(context_id)
+
+    def on_frame_context(self, handler: Callable[[str, int], Awaitable[None]]) -> None:
+        """Register a callback for (frame_id, context_id) when a frame gets a
+        fresh default context — i.e. a new document loaded into that frame."""
+        self._context_listeners.append(handler)
+
+    def _wire_context_tracking(self) -> None:
+        async def on_created(params: dict) -> None:
+            ctx = params.get("context") or {}
+            aux = ctx.get("auxData") or {}
+            frame_id = aux.get("frameId")
+            ctx_id = ctx.get("id")
+            # Only DEFAULT worlds — isolated worlds share the DOM but not the
+            # page's own globals, and the recorder binding lives in the default.
+            if not (aux.get("isDefault") and frame_id and ctx_id is not None):
+                return
+            self.frame_contexts[frame_id] = ctx_id
+            self._context_frames[ctx_id] = frame_id
+            for cb in list(self._context_listeners):
+                try:
+                    await cb(frame_id, ctx_id)
+                except Exception:  # noqa: BLE001
+                    log.exception("frame-context listener failed")
+
+        async def on_destroyed(params: dict) -> None:
+            ctx_id = params.get("executionContextId")
+            frame_id = self._context_frames.pop(ctx_id, None)
+            if frame_id and self.frame_contexts.get(frame_id) == ctx_id:
+                self.frame_contexts.pop(frame_id, None)
+
+        async def on_cleared(_params: dict) -> None:
+            self.frame_contexts.clear()
+            self._context_frames.clear()
+
+        self.on_event("Runtime.executionContextCreated", on_created)
+        self.on_event("Runtime.executionContextDestroyed", on_destroyed)
+        self.on_event("Runtime.executionContextsCleared", on_cleared)
 
     async def _safe_dispatch(self, method: str, handler, params: dict) -> None:
         try:
